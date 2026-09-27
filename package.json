@@ -1,6 +1,7 @@
 {
   "name": "smart-closet-mvp",
   "private": true,
+  "type": "module",
   "scripts": {
     "test": "node --test backend/*.test.js"
   }
