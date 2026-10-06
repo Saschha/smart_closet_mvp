@@ -141,3 +141,7 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Local wardrobe storage (user photos + metadata)
+backend/data/
+backend/uploads/

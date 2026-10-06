@@ -18,3 +18,13 @@ export function isValidImageFile(filename) {
   const ext = filename.slice(dotIndex).toLowerCase();
   return ALLOWED_EXTENSIONS.has(ext);
 }
+
+// Browsers usually report camera RAW files as application/octet-stream.
+export function isValidImageMime(mimetype) {
+  if (typeof mimetype !== 'string') {
+    return false;
+  }
+
+  const type = mimetype.toLowerCase();
+  return type.startsWith('image/') || type === 'application/octet-stream';
+}
