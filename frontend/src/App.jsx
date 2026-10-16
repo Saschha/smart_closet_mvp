@@ -75,7 +75,7 @@ function App() {
         <input style={styles.input} type="text" name="tags" placeholder="Tags, comma-separated (optional)" />
         {error && <p style={styles.error}>{error}</p>}
         <button style={styles.button} type="submit" disabled={saving}>
-          {saving ? 'Saving…' : 'Save to wardrobe'}
+          {saving ? 'Saving & tagging…' : 'Save to wardrobe'}
         </button>
       </form>
 
@@ -86,6 +86,11 @@ function App() {
             <img style={styles.thumb} src={item.filepath} alt={item.title || 'Wardrobe item'} />
             <strong>{item.title || 'Untitled'}</strong>
             {item.tags.length > 0 && <p style={styles.tags}>{item.tags.join(', ')}</p>}
+            {item.aiTags && (
+              <p style={styles.tags}>
+                {item.aiTags.category} · {item.aiTags.subType} · {item.aiTags.color}
+              </p>
+            )}
           </li>
         ))}
       </ul>

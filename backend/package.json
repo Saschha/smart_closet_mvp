@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --env-file-if-exists=.env --watch index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
     "express": "^5.2.1",
-    "multer": "^2.4.0"
+    "multer": "^2.4.0",
+    "zod": "^4.6.7"
   }
 }

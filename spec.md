@@ -9,7 +9,7 @@
   - File/Camera upload payload: Accepted image types (`.jpg`, `.jpeg`, `.png`, `.webp`, and standard camera RAW formats). Explicitly rejected: non-image or editing formats (`.pdf`, `.doc`, `.ai`, `.psd`, `.tif`, `.md`).
   - Metadata payload (optional): `title` (string), `note` (string), `tags` (array of strings or comma-separated string).
 - **Output:**
-  - Stored item object: `{ id, filename, filepath, title, note, tags, createdAt }`.
+  - Stored item object: `{ id, filename, filepath, aiTags, title, note, tags, createdAt }`. `aiTags` was added in Task 2 (see `docs/spec-task2-ai-tagging.md`); it is `null` when tagging failed or is disabled, and missing on items saved before Task 2.
   - HTTP 201 Created response (API) with item details or informative error response (HTTP 400/415).
 
 ## 3. Preconditions & Guarantees

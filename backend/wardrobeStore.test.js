@@ -57,6 +57,17 @@ describe('createWardrobeStore', () => {
         assert.equal(item.note, '');
     });
 
+    it('should persist aiTags and default them to null', async () => {
+        const aiTags = { category: 'top', subType: 'button-down shirt', color: 'light blue' };
+        const tagged = await store.add({ buffer: Buffer.from('1'), originalname: 'a.jpg', aiTags });
+        const untagged = await store.add({ buffer: Buffer.from('2'), originalname: 'b.jpg' });
+
+        assert.deepEqual(tagged.aiTags, aiTags);
+        assert.equal(untagged.aiTags, null);
+        const records = JSON.parse(await readFile(dataFile, 'utf8'));
+        assert.deepEqual(records.map((record) => record.aiTags), [aiTags, null]);
+    });
+
     it('should list items newest first', async () => {
         const first = await store.add({ buffer: Buffer.from('1'), originalname: 'a.jpg' });
         const second = await store.add({ buffer: Buffer.from('2'), originalname: 'b.jpg' });

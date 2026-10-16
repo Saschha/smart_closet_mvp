@@ -5,7 +5,27 @@ import { isValidImageFile, isValidImageMime } from './validator.js'
 // Keep uploads in memory so nothing is written to disk before validation passes.
 const upload = multer({ storage: multer.memoryStorage() })
 
-export function createApp({ store, uploadDir }) {
+// Resolves to normalized tags, or null if tagging is disabled, fails or exceeds timeoutMs.
+// Never rejects, so a tagging problem can't fail the save.
+async function tagWithTimeout(tagger, file, timeoutMs) {
+  if (!tagger) {
+    return null
+  }
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Tagging timed out after ${timeoutMs} ms`)), timeoutMs)
+  })
+  try {
+    return await Promise.race([tagger.tag(file.buffer, file.mimetype), timeout])
+  } catch (err) {
+    console.warn(`AI tagging skipped: ${err.message}`)
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export function createApp({ store, uploadDir, tagger, tagTimeoutMs = 8000 }) {
   const app = express()
 
   app.use(express.json())
@@ -32,7 +52,8 @@ export function createApp({ store, uploadDir }) {
     }
 
     const { title, note, tags } = req.body
-    const item = await store.add({ buffer: file.buffer, originalname: file.originalname, title, note, tags })
+    const aiTags = await tagWithTimeout(tagger, file, tagTimeoutMs)
+    const item = await store.add({ buffer: file.buffer, originalname: file.originalname, title, note, tags, aiTags })
     res.status(201).json(item)
   })
 

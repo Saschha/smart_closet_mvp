@@ -25,7 +25,7 @@ export function createWardrobeStore({ dataFile, uploadDir }) {
     return (await readItems()).reverse();
   }
 
-  async function add({ buffer, originalname, title = '', note = '', tags }) {
+  async function add({ buffer, originalname, title = '', note = '', tags, aiTags = null }) {
     await mkdir(uploadDir, { recursive: true });
     await mkdir(path.dirname(dataFile), { recursive: true });
 
@@ -37,6 +37,7 @@ export function createWardrobeStore({ dataFile, uploadDir }) {
       id,
       filename,
       filepath: `/uploads/${filename}`,
+      aiTags,
       title: String(title).trim(),
       note: String(note).trim(),
       tags: normalizeTags(tags),
