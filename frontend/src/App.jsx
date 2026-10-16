@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react'
 
 const ACCEPT = 'image/*,.dng,.cr2,.nef,.arw,.orf,.rw2,.raw'
 
+// Used only when the server response has no JSON `error` field.
+const FALLBACK_ERRORS = {
+  400: 'Please choose a non-empty image to upload.',
+  415: 'Unsupported format. Use JPG, PNG, WebP or a camera RAW file.',
+}
+
 const styles = {
   page: { maxWidth: 480, margin: '0 auto', padding: 16, fontFamily: 'system-ui, sans-serif' },
   form: { display: 'flex', flexDirection: 'column', gap: 12 },
@@ -32,17 +38,27 @@ function App() {
     const form = event.currentTarget
     setError('')
     setSaving(true)
+    let res
     try {
-      const res = await fetch('/api/wardrobe', { method: 'POST', body: new FormData(form) })
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}))
-        setError(body.error || 'Upload failed')
+      res = await fetch('/api/wardrobe', { method: 'POST', body: new FormData(form) })
+    } catch {
+      // Network failure: no response at all. Form contents stay as they are.
+      setError('Could not reach the server. Check your connection and try again.')
+      setSaving(false)
+      return
+    }
+
+    try {
+      const body = await res.json().catch(() => ({}))
+
+      if (res.status === 201) {
+        setItems((prev) => [body, ...prev])
+        form.reset()
         return
       }
-      form.reset()
-      await loadItems()
-    } catch {
-      setError('Upload failed')
+
+      // Failure branch: keep the form contents so the user can retry.
+      setError(body.error || FALLBACK_ERRORS[res.status] || 'Upload failed')
     } finally {
       setSaving(false)
     }
