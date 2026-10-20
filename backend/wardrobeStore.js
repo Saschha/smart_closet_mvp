@@ -1,6 +1,6 @@
 // backend/wardrobeStore.js
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 function normalizeTags(tags) {
@@ -9,6 +9,23 @@ function normalizeTags(tags) {
 }
 
 export function createWardrobeStore({ dataFile, uploadDir }) {
+  // Promise-chain mutex: each read-modify-write of dataFile waits for the previous one.
+  let writeQueue = Promise.resolve();
+
+  function serialize(task) {
+    const run = writeQueue.then(task);
+    // Keep the chain alive even if this task fails.
+    writeQueue = run.catch(() => {});
+    return run;
+  }
+
+  // Write to a temp file and rename it over dataFile, so readers never see a half-written file.
+  async function writeItems(items) {
+    const tmpFile = `${dataFile}.tmp`;
+    await writeFile(tmpFile, JSON.stringify(items, null, 2));
+    await rename(tmpFile, dataFile);
+  }
+
   async function readItems() {
     try {
       return JSON.parse(await readFile(dataFile, 'utf8'));
@@ -44,9 +61,11 @@ export function createWardrobeStore({ dataFile, uploadDir }) {
       createdAt: new Date().toISOString(),
     };
 
-    const items = await readItems();
-    items.push(item);
-    await writeFile(dataFile, JSON.stringify(items, null, 2));
+    await serialize(async () => {
+      const items = await readItems();
+      items.push(item);
+      await writeItems(items);
+    });
     return item;
   }
 

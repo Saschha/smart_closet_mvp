@@ -91,6 +91,18 @@ describe('wardrobe API', () => {
         await assertNothingPersisted();
     });
 
+    it('BUG-001: concurrent POSTs all return 201 and every item is listed', async () => {
+        const responses = await Promise.all(
+            Array.from({ length: 10 }, (_, i) => upload(`item-${i}.png`, `png-${i}`, 'image/png')),
+        );
+        assert.deepEqual(responses.map((res) => res.status), Array(10).fill(201));
+        const created = await Promise.all(responses.map((res) => res.json()));
+
+        const items = await (await fetch(`${baseUrl}/api/wardrobe`)).json();
+        assert.equal(items.length, 10);
+        assert.deepEqual(items.map((item) => item.id).sort(), created.map((item) => item.id).sort());
+    });
+
     it('rejects a request without an image', async () => {
         const form = new FormData();
         form.append('title', 'No file');

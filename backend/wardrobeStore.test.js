@@ -75,4 +75,15 @@ describe('createWardrobeStore', () => {
         const ids = (await store.list()).map((item) => item.id);
         assert.deepEqual(ids, [second.id, first.id]);
     });
+
+    it('should keep every record when add() is called concurrently (BUG-001)', async () => {
+        const added = await Promise.all(
+            Array.from({ length: 10 }, (_, i) => store.add({ buffer: Buffer.from(String(i)), originalname: `${i}.png` })),
+        );
+
+        const records = JSON.parse(await readFile(dataFile, 'utf8'));
+        assert.equal(records.length, 10);
+        const listedIds = (await store.list()).map((item) => item.id).sort();
+        assert.deepEqual(listedIds, added.map((item) => item.id).sort());
+    });
 });
