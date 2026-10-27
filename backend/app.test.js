@@ -1,5 +1,5 @@
 // backend/app.test.js
-import { describe, it, before, after, beforeEach, afterEach, mock } from 'node:test';
+import { describe, it, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,7 @@ describe('wardrobe API', () => {
     let dir;
     let uploadDir;
 
-    before(async () => {
+    beforeAll(async () => {
         dir = await mkdtemp(path.join(tmpdir(), 'wardrobe-api-'));
         uploadDir = path.join(dir, 'uploads');
         const store = createWardrobeStore({ dataFile: path.join(dir, 'data', 'wardrobe.json'), uploadDir });
@@ -25,7 +25,7 @@ describe('wardrobe API', () => {
         baseUrl = `http://localhost:${server.address().port}`;
     });
 
-    after(() => {
+    afterAll(() => {
         server.close();
     });
 
@@ -119,11 +119,11 @@ describe('wardrobe API with AI tagging', () => {
 
     beforeEach(async () => {
         dir = await mkdtemp(path.join(tmpdir(), 'wardrobe-tag-'));
-        mock.method(console, 'warn', () => {});
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
 
     afterEach(() => {
-        mock.restoreAll();
+        vi.restoreAllMocks();
         for (const server of servers) server.close();
         servers = [];
     });
@@ -186,13 +186,17 @@ describe('wardrobe API with AI tagging', () => {
     });
 
     it('clears the timeout timer once tagging settles', async () => {
-        const countTimers = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+        const setSpy = vi.spyOn(globalThis, 'setTimeout');
+        const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
         const { upload } = await start({ tagger: spyTagger(async () => shirtTags), tagTimeoutMs: 60_000 });
 
-        await (await upload()).json(); // warm up any server-side timers
-        const before = countTimers();
         await (await upload()).json();
-        assert.equal(countTimers(), before);
+        // Only look at the tagging timer, so other timers (runner, sockets) can't affect the result.
+        const tagTimers = setSpy.mock.calls
+            .map((args, i) => (args[1] === 60_000 ? setSpy.mock.results[i].value : null))
+            .filter(Boolean);
+        assert.equal(tagTimers.length, 1);
+        assert.ok(clearSpy.mock.calls.some(([timer]) => timer === tagTimers[0]), 'tagging timer should be cleared');
     });
 
     it('saves with aiTags: null when no tagger is configured', async () => {
