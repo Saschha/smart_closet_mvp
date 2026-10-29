@@ -7,11 +7,12 @@ A mobile-first web app to prevent impulse clothing buys by comparing store photo
 - Language: JavaScript (Plain modern JS / ES Modules only). No TypeScript.
 - Frontend: React + Vite (Plain JavaScript). Port 5173.
 - Backend: Node.js + Express (ES Modules). Port 3000.
-- Testing: Node.js built-in test runner (`node --test`).
+- Testing: Vitest (`npm test`), coverage via `@vitest/coverage-v8`.
 
 ## Core Commands
 - Run both servers concurrently: `./run.sh`
 - Run backend tests: `npm test`
+- Run tests with coverage (min. 80% for backend JS): `npm run coverage`
 - Frontend dev server: `npm --prefix frontend run dev`
 - Backend dev server: `npm --prefix backend run dev`
 
