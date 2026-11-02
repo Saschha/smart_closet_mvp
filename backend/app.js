@@ -57,5 +57,17 @@ export function createApp({ store, uploadDir, tagger, tagTimeoutMs = 8000 }) {
     res.status(201).json(item)
   })
 
+  // Errors thrown in a route or middleware become JSON instead of Express's default HTML page.
+  app.use((err, req, res, next) => {
+    if (res.headersSent) {
+      return next(err)
+    }
+    const status = err.status >= 400 && err.status < 500 ? err.status : 500
+    if (status === 500) {
+      console.error(err)
+    }
+    res.status(status).json({ error: status === 500 ? 'Internal server error' : err.message })
+  })
+
   return app
 }

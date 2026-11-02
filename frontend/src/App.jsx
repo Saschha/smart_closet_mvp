@@ -26,6 +26,9 @@ function App() {
 
   async function loadItems() {
     const res = await fetch('/api/wardrobe')
+    if (!res.ok) {
+      throw new Error(`Could not load wardrobe (${res.status})`)
+    }
     setItems(await res.json())
   }
 
