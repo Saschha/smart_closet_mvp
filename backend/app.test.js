@@ -215,3 +215,55 @@ describe('wardrobe API with AI tagging', () => {
         assert.equal(tagger.calls.length, 0);
     });
 });
+
+describe('error handling', () => {
+    let server;
+    let baseUrl;
+
+    beforeAll(async () => {
+        const store = {
+            list: async () => {
+                throw new Error('boom');
+            },
+        };
+        const app = createApp({ store, uploadDir: tmpdir() });
+        await new Promise((resolve) => {
+            server = app.listen(0, resolve);
+        });
+        baseUrl = `http://localhost:${server.address().port}`;
+    });
+
+    afterAll(() => {
+        server.close();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it('returns a JSON 500 without internal details when a route throws', async () => {
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        const res = await fetch(`${baseUrl}/api/wardrobe`);
+        const text = await res.text();
+
+        assert.equal(res.status, 500);
+        assert.match(res.headers.get('content-type'), /json/);
+        assert.deepEqual(JSON.parse(text), { error: 'Internal server error' });
+        assert.doesNotMatch(text, /boom|at /);
+        assert.equal(logged.mock.calls.length, 1);
+    });
+
+    it('returns a JSON 4xx with its message for a malformed JSON body', async () => {
+        const res = await fetch(`${baseUrl}/api/wardrobe`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{bad',
+        });
+
+        assert.equal(res.status, 400);
+        assert.match(res.headers.get('content-type'), /json/);
+        const body = await res.json();
+        assert.equal(typeof body.error, 'string');
+    });
+});
