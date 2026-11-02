@@ -1,9 +1,38 @@
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import express from 'express'
 import multer from 'multer'
 import { isValidImageFile, isValidImageMime } from './validator.js'
 
 // Keep uploads in memory so nothing is written to disk before validation passes.
 const upload = multer({ storage: multer.memoryStorage() })
+
+// Formats Gemini can read. Camera RAW is accepted for saving but can't be compared.
+const GEMINI_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }
+
+function geminiMimeFor(filename) {
+  return GEMINI_MIME[path.extname(filename).toLowerCase()]
+}
+
+// Loads closet photos Gemini can read. Items whose file is missing on disk are skipped.
+async function loadClosetImages(store, uploadDir) {
+  const closetItems = []
+  for (const item of await store.list()) {
+    const mimeType = geminiMimeFor(item.filename)
+    if (!mimeType) {
+      continue
+    }
+    try {
+      const buffer = await readFile(path.join(uploadDir, item.filename))
+      closetItems.push({ id: item.id, buffer, mimeType, title: item.title })
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        throw err
+      }
+    }
+  }
+  return closetItems
+}
 
 // Resolves to normalized tags, or null if tagging is disabled, fails or exceeds timeoutMs.
 // Never rejects, so a tagging problem can't fail the save.
@@ -25,7 +54,7 @@ async function tagWithTimeout(tagger, file, timeoutMs) {
   }
 }
 
-export function createApp({ store, uploadDir, tagger, tagTimeoutMs = 8000 }) {
+export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 8000 }) {
   const app = express()
 
   app.use(express.json())
@@ -55,6 +84,33 @@ export function createApp({ store, uploadDir, tagger, tagTimeoutMs = 8000 }) {
     const aiTags = await tagWithTimeout(tagger, file, tagTimeoutMs)
     const item = await store.add({ buffer: file.buffer, originalname: file.originalname, title, note, tags, aiTags })
     res.status(201).json(item)
+  })
+
+  app.post('/api/check', upload.single('image'), async (req, res) => {
+    const file = req.file
+    if (!file) {
+      return res.status(400).json({ error: 'No image provided' })
+    }
+    const mimeType = geminiMimeFor(file.originalname)
+    if (!isValidImageFile(file.originalname) || !isValidImageMime(file.mimetype) || !mimeType) {
+      return res.status(415).json({ error: 'Unsupported format. Use JPG, PNG or WebP.' })
+    }
+    if (file.size === 0) {
+      return res.status(400).json({ error: 'Image is empty or unreadable' })
+    }
+    if (!matcher) {
+      return res.status(503).json({ error: 'Visual comparison service is not configured' })
+    }
+
+    const closetItems = await loadClosetImages(store, uploadDir)
+    let result
+    try {
+      result = await matcher.compareItem({ newItem: { buffer: file.buffer, mimeType }, closetItems })
+    } catch (err) {
+      console.warn(`Visual comparison failed: ${err.message}`)
+      return res.status(502).json({ error: 'Visual comparison failed, please try again' })
+    }
+    res.json({ hasMatch: result.hasMatch, matches: result.matches })
   })
 
   // Errors thrown in a route or middleware become JSON instead of Express's default HTML page.

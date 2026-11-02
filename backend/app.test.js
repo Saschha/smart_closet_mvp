@@ -1,7 +1,7 @@
 // backend/app.test.js
 import { describe, it, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createApp } from './app.js';
@@ -265,5 +265,144 @@ describe('error handling', () => {
         assert.match(res.headers.get('content-type'), /json/);
         const body = await res.json();
         assert.equal(typeof body.error, 'string');
+    });
+});
+
+describe('POST /api/check', () => {
+    const matches = [
+        {
+            id: 'placeholder',
+            similarity: 'high',
+            reason: { cut: 'same slim fit', material: 'both cotton', color: 'both light blue' },
+        },
+    ];
+    let servers = [];
+    let dir;
+
+    beforeEach(async () => {
+        dir = await mkdtemp(path.join(tmpdir(), 'wardrobe-check-'));
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        for (const server of servers) server.close();
+        servers = [];
+    });
+
+    function fakeMatcher(impl) {
+        const calls = [];
+        return {
+            calls,
+            compareItem: async (args) => {
+                calls.push(args);
+                return impl(args);
+            },
+        };
+    }
+
+    async function start(options) {
+        const uploadDir = path.join(dir, 'uploads');
+        const store = createWardrobeStore({ dataFile: path.join(dir, 'data', 'wardrobe.json'), uploadDir });
+        const app = createApp({ store, uploadDir, ...options });
+        const server = await new Promise((resolve) => {
+            const s = app.listen(0, () => resolve(s));
+        });
+        servers.push(server);
+        const baseUrl = `http://localhost:${server.address().port}`;
+        const check = (filename = 'store.jpg', content = 'store-bytes', type = 'image/jpeg') => {
+            const form = new FormData();
+            if (filename) {
+                form.append('image', new Blob([content], { type }), filename);
+            }
+            return fetch(`${baseUrl}/api/check`, { method: 'POST', body: form });
+        };
+        return { check, store, uploadDir };
+    }
+
+    it('returns 200 with the comparison and sends only readable closet photos', async () => {
+        const matcher = fakeMatcher(() => ({ hasMatch: true, matches }));
+        const { check, store, uploadDir } = await start({ matcher });
+        const shirt = await store.add({ buffer: Buffer.from('shirt'), originalname: 'shirt.jpg', title: 'Blue shirt' });
+        const jeans = await store.add({ buffer: Buffer.from('jeans'), originalname: 'jeans.PNG', title: 'Jeans' });
+        await store.add({ buffer: Buffer.from('raw'), originalname: 'coat.dng', title: 'RAW coat' });
+        const gone = await store.add({ buffer: Buffer.from('gone'), originalname: 'gone.webp', title: 'Deleted' });
+        await rm(path.join(uploadDir, gone.filename));
+
+        const res = await check('store.jpg', 'store-bytes', 'image/jpeg');
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { hasMatch: true, matches });
+        assert.equal(matcher.calls.length, 1);
+        const { newItem, closetItems } = matcher.calls[0];
+        assert.deepEqual(newItem, { buffer: Buffer.from('store-bytes'), mimeType: 'image/jpeg' });
+        // store.list() is newest first.
+        assert.deepEqual(closetItems, [
+            { id: jeans.id, buffer: Buffer.from('jeans'), mimeType: 'image/png', title: 'Jeans' },
+            { id: shirt.id, buffer: Buffer.from('shirt'), mimeType: 'image/jpeg', title: 'Blue shirt' },
+        ]);
+    });
+
+    it('returns 400 for a missing or empty image without calling the matcher', async () => {
+        const matcher = fakeMatcher(() => ({ hasMatch: false, matches: [] }));
+        const { check } = await start({ matcher });
+
+        const missing = await check(null);
+        assert.equal(missing.status, 400);
+        assert.deepEqual(await missing.json(), { error: 'No image provided' });
+
+        const empty = await check('store.jpg', '', 'image/jpeg');
+        assert.equal(empty.status, 400);
+        assert.equal(matcher.calls.length, 0);
+    });
+
+    it('returns 415 for unsupported formats, including camera RAW, without calling the matcher', async () => {
+        const matcher = fakeMatcher(() => ({ hasMatch: false, matches: [] }));
+        const { check } = await start({ matcher });
+
+        for (const [filename, type] of [
+            ['notes.pdf', 'application/pdf'],
+            ['store.jpg', 'text/plain'],
+            ['store.dng', 'application/octet-stream'],
+        ]) {
+            const res = await check(filename, 'bytes', type);
+            assert.equal(res.status, 415, filename);
+            assert.match(res.headers.get('content-type'), /json/);
+        }
+        assert.equal(matcher.calls.length, 0);
+    });
+
+    it('returns 503 when no matcher is configured', async () => {
+        const { check } = await start({});
+        const res = await check();
+        assert.equal(res.status, 503);
+        assert.deepEqual(await res.json(), { error: 'Visual comparison service is not configured' });
+    });
+
+    it('returns 502 with a JSON error when the matcher fails or times out', async () => {
+        for (const message of ['quota exceeded', 'Gemini comparison timed out after 10000 ms']) {
+            const matcher = fakeMatcher(() => {
+                throw new Error(message);
+            });
+            const { check } = await start({ matcher });
+            const res = await check();
+            assert.equal(res.status, 502);
+            assert.deepEqual(await res.json(), { error: 'Visual comparison failed, please try again' });
+        }
+        assert.equal(console.warn.mock.calls.length, 2);
+    });
+
+    it('returns a JSON 500 when a closet photo exists but cannot be read', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const matcher = fakeMatcher(() => ({ hasMatch: false, matches: [] }));
+        const { check, store, uploadDir } = await start({ matcher });
+        const item = await store.add({ buffer: Buffer.from('x'), originalname: 'shirt.jpg' });
+        await rm(path.join(uploadDir, item.filename));
+        await mkdir(path.join(uploadDir, item.filename)); // reading a directory fails with EISDIR
+
+        const res = await check();
+        assert.equal(res.status, 500);
+        assert.deepEqual(await res.json(), { error: 'Internal server error' });
+        assert.equal(matcher.calls.length, 0);
     });
 });
