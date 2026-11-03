@@ -54,6 +54,20 @@ async function tagWithTimeout(tagger, file, timeoutMs) {
   }
 }
 
+// Returns { status, error } for an unacceptable wardrobe upload, or null if it's fine.
+function wardrobeUploadError(file) {
+  if (!file) {
+    return { status: 400, error: 'No image provided' }
+  }
+  if (!isValidImageFile(file.originalname) || !isValidImageMime(file.mimetype)) {
+    return { status: 415, error: 'Unsupported format' }
+  }
+  if (file.size === 0) {
+    return { status: 400, error: 'Image is empty or unreadable' }
+  }
+  return null
+}
+
 export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 8000 }) {
   const app = express()
 
@@ -70,14 +84,9 @@ export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 80
 
   app.post('/api/wardrobe', upload.single('image'), async (req, res) => {
     const file = req.file
-    if (!file) {
-      return res.status(400).json({ error: 'No image provided' })
-    }
-    if (!isValidImageFile(file.originalname) || !isValidImageMime(file.mimetype)) {
-      return res.status(415).json({ error: 'Unsupported format' })
-    }
-    if (file.size === 0) {
-      return res.status(400).json({ error: 'Image is empty or unreadable' })
+    const problem = wardrobeUploadError(file)
+    if (problem) {
+      return res.status(problem.status).json({ error: problem.error })
     }
 
     const { title, note, tags } = req.body
