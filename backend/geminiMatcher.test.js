@@ -42,7 +42,7 @@ describe('createGeminiMatcher', () => {
 
         assert.equal(client.calls.length, 1);
         const params = client.calls[0];
-        assert.equal(params.model, 'gemini-2.5-flash');
+        assert.equal(params.model, 'gemini-3.8-flash');
         assert.equal(params.config.responseMimeType, 'application/json');
         assert.deepEqual(params.config.responseSchema.required, ['hasMatch', 'matches']);
 

@@ -67,7 +67,7 @@ function parseComparison(text, candidateIds) {
   return { hasMatch: matches.length > 0, matches }
 }
 
-export function createGeminiMatcher({ client, model = 'gemini-2.5-flash', timeoutMs = 10000 }) {
+export function createGeminiMatcher({ client, model = 'gemini-3.8-flash', timeoutMs = 10000 }) {
   async function compareItem({ newItem, closetItems }) {
     if (!closetItems?.length) {
       return { hasMatch: false, matches: [] }
