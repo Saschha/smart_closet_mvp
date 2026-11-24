@@ -17,7 +17,7 @@ The smallest version that actually solves the problem is a web app where the use
 
 **P1 — Important Enhancements:**
 
-- **Task 2: Auto-tagging & category extraction** — _Implemented (Anthropic SDK; Gemini migration planned)._ Extracts category, sub-type, and color tags when saving an item.
+- **Task 2: Auto-tagging & category extraction** — _Implemented (Google Gemini, `gemini-3.5-flash`)._ Extracts category, sub-type, and color tags when saving an item.
 - **Task 7: Wardrobe gallery & deletion** — _Partially done._ The 2-column wardrobe gallery is live; item deletion is not implemented yet.
 - **Task 8: Edge cases & fallback handling** — _Done._ Handles empty wardrobes, unsupported file formats (415), 0-byte/oversized files (400/413), and API timeouts without crashing.
 
@@ -34,7 +34,7 @@ flowchart LR
     User["Browser / Phone Camera"] --> FE["Frontend (React 19 + Vite, :5173)"]
     FE -- "HTTP /api & /uploads (Vite proxy)" --> BE["Backend (Express 5 + Multer, :3000)"]
     BE -- "Read / Atomic Write" --> Store["Local Storage (uploads/ + wardrobe.json)"]
-    BE -- "Vision API (Compare & Tag)" --> AI["Google Gemini / Anthropic API"]
+    BE -- "Vision API (Compare & Tag)" --> AI["Google Gemini API"]
 ```
 
 ### Repository Layout
@@ -73,8 +73,7 @@ To run this project on your machine, you need:
 
 - **Node.js** (v22 or higher) and **npm** (v9 or higher)
 - **Git** and a **Bash-compatible terminal** (Linux/macOS terminal, or **Git Bash / WSL** on Windows)
-- A **Google Gemini API Key** (from Google AI Studio) for the visual clothing comparison (`POST /api/check`)
-- _(Optional)_ An **Anthropic API Key** if you want automatic AI tagging upon saving (`POST /api/wardrobe`); without it, saving still works normally.
+- A **Google Gemini API Key** (`GEMINI_API_KEY`, from Google AI Studio) for both the visual clothing comparison (`POST /api/check`) and automatic AI tagging upon saving (`POST /api/wardrobe`). Without it, both AI features are disabled, but saving still works normally (items get `aiTags: null`).
 
 ---
 

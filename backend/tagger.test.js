@@ -1,47 +1,51 @@
 // backend/tagger.test.js
 import { describe, it } from 'vitest';
 import assert from 'node:assert/strict';
-import { createTagger, normalizeTags } from './tagger.js';
+import { CATEGORIES, createTagger, normalizeTags } from './tagger.js';
 
 function fakeClient(response) {
     const calls = [];
     return {
         calls,
-        messages: {
-            async parse(params, options) {
-                calls.push({ params, options });
-                return response;
+        models: {
+            async generateContent(params) {
+                calls.push(params);
+                return typeof response === 'function' ? response(params) : response;
             },
         },
     };
 }
 
-const ok = (parsed_output) => ({ stop_reason: 'end_turn', parsed_output });
+const ok = (body) => ({ text: JSON.stringify(body) });
 const shirt = { category: 'top', subType: 'button-down shirt', color: 'light blue' };
 
 describe('createTagger', () => {
-    it('returns { category, subType, color } from a valid parsed output', async () => {
+    it('returns { category, subType, color } from a valid JSON response', async () => {
         const tagger = createTagger({ client: fakeClient(ok(shirt)) });
         assert.deepEqual(await tagger.tag(Buffer.from('img'), 'image/jpeg'), shirt);
     });
 
-    it('sends the model, a base64 image block, effort and request options', async () => {
+    it('sends the model, prompt, inline image, JSON schema config and timeout', async () => {
         const client = fakeClient(ok(shirt));
         await createTagger({ client }).tag(Buffer.from('img'), 'image/png');
 
         assert.equal(client.calls.length, 1);
-        const { params, options } = client.calls[0];
-        assert.equal(params.model, 'claude-haiku-5-5');
-        assert.equal(params.max_tokens, 1024);
-        assert.equal(params.output_config.effort, 'low');
-        assert.ok(params.output_config.format);
-        const image = params.messages[0].content.find((block) => block.type === 'image');
-        assert.deepEqual(image.source, {
-            type: 'base64',
-            media_type: 'image/png',
+        const params = client.calls[0];
+        assert.equal(params.model, 'gemini-3.5-flash');
+
+        const parts = params.contents[0].parts;
+        assert.ok(parts.some((part) => typeof part.text === 'string' && part.text.includes('garment')));
+        const image = parts.find((part) => part.inlineData);
+        assert.deepEqual(image.inlineData, {
+            mimeType: 'image/png',
             data: Buffer.from('img').toString('base64'),
         });
-        assert.deepEqual(options, { timeout: 8000, maxRetries: 0 });
+
+        const { config } = params;
+        assert.equal(config.responseMimeType, 'application/json');
+        assert.deepEqual(config.responseSchema.required, ['category', 'subType', 'color']);
+        assert.deepEqual(config.responseSchema.properties.category.enum, CATEGORIES);
+        assert.deepEqual(config.httpOptions, { timeout: 8000 });
     });
 
     it('normalizes whitespace and case', async () => {
@@ -58,12 +62,30 @@ describe('createTagger', () => {
         assert.throws(() => normalizeTags({ ...shirt, brand: 'acme' }), /unexpected fields/);
     });
 
-    it('throws on a refusal and on a null parsed_output', async () => {
-        const refused = createTagger({ client: fakeClient({ stop_reason: 'refusal', parsed_output: null }) });
-        await assert.rejects(refused.tag(Buffer.from('img'), 'image/jpeg'), /refused/);
+    it('throws on invalid JSON, a missing text (blocked response) and a null body', async () => {
+        const garbage = createTagger({ client: fakeClient({ text: 'not json' }) });
+        await assert.rejects(garbage.tag(Buffer.from('img'), 'image/jpeg'), /invalid JSON/);
+
+        const blocked = createTagger({ client: fakeClient({}) });
+        await assert.rejects(blocked.tag(Buffer.from('img'), 'image/jpeg'), /invalid JSON/);
 
         const empty = createTagger({ client: fakeClient(ok(null)) });
         await assert.rejects(empty.tag(Buffer.from('img'), 'image/jpeg'), /no tags/);
+    });
+
+    it('throws when the JSON does not match the expected tag shape', async () => {
+        const extra = createTagger({ client: fakeClient(ok({ ...shirt, brand: 'acme' })) });
+        await assert.rejects(extra.tag(Buffer.from('img'), 'image/jpeg'), /unexpected fields/);
+
+        const badCategory = createTagger({ client: fakeClient(ok({ ...shirt, category: 'hat' })) });
+        await assert.rejects(badCategory.tag(Buffer.from('img'), 'image/jpeg'), /unknown category/);
+    });
+
+    it('propagates a client error', async () => {
+        const client = fakeClient(() => {
+            throw new Error('network down');
+        });
+        await assert.rejects(createTagger({ client }).tag(Buffer.from('img'), 'image/jpeg'), /network down/);
     });
 
     it('throws on unsupported MIME types without calling the client', async () => {

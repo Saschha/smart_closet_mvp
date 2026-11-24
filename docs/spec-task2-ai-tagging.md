@@ -1,7 +1,7 @@
 # Specification: Auto-tag wardrobe items (Task 2)
 
 ## 1. Feature description
-- **What it does:** when a wardrobe photo is saved, the backend asks a vision model (Claude Haiku 5.5) for the garment's `category`, `subType` and `color`. It stores these as `aiTags` on the item's record and returns them in the save response. The wardrobe grid shows them.
+- **What it does:** when a wardrobe photo is saved, the backend asks a vision model (Google Gemini `gemini-3.5-flash`) for the garment's `category`, `subType` and `color`. It stores these as `aiTags` on the item's record and returns them in the save response. The wardrobe grid shows them.
 - **What it leaves alone:** the upload validation from Task 1, and the manual `title`/`note`/`tags` fields. No comparison logic, no tag editing.
 
 ## 2. User flow
@@ -34,20 +34,20 @@
 ## 4. Backend changes
 | File | Change |
 |---|---|
-| `backend/tagger.js` (new) | `createTagger({ client, model = 'claude-haiku-5-5', timeoutMs = 8000 })` returns `{ tag(buffer, mimetype) }`. See the details below. |
+| `backend/tagger.js` (new) | `createTagger({ client, model = 'gemini-3.5-flash', timeoutMs = 8000 })` returns `{ tag(buffer, mimetype) }`. See the details below. |
 | `backend/app.js` | `createApp({ store, uploadDir, tagger, tagTimeoutMs = 8000 })`. After the existing validation and before `store.add`, it runs `tagger.tag(file.buffer, file.mimetype)` raced against a `tagTimeoutMs` timer, inside `try/catch`. The timer is cleared (`clearTimeout`) as soon as tagging settles, success or failure, so no timer stays pending after the response. On any failure it logs `console.warn` (error message only, never request headers or the key) and uses `aiTags = null`. If no `tagger` is passed, tagging is skipped. |
 | `backend/wardrobeStore.js` | `add({ …, aiTags = null })` and the record gets `aiTags`. |
-| `backend/index.js` | If `ANTHROPIC_API_KEY` is set, build `new Anthropic()` and `createTagger({ client })`. Otherwise log "AI tagging disabled" and pass no tagger. |
-| `backend/package.json` | Add dependencies `@anthropic-ai/sdk` and `zod`. Change the `dev` script to `node --env-file-if-exists=.env --watch index.js` so a local `backend/.env` file is loaded (Node ≥ 22.9; the project uses 22.22). `start` is unchanged. |
+| `backend/index.js` | If `GEMINI_API_KEY` is set, build one `new GoogleGenAI({ apiKey })` client and pass it to both `createGeminiMatcher({ client })` and `createTagger({ client })`. Otherwise log "AI features disabled (GEMINI_API_KEY is not set)" and pass no tagger or matcher. |
+| `backend/package.json` | Uses the existing `@google/genai` dependency (no extra SDK). Change the `dev` script to `node --env-file-if-exists=.env --watch index.js` so a local `backend/.env` file is loaded (Node ≥ 22.9; the project uses 22.22). `start` is unchanged. |
 | Docs | `docs/boundary-upload.md`: add `aiTags` to the 201 response (done together with this spec). `spec.md` (Task 1): add `aiTags` to the stored item shape in §2 Output when Task 2 is implemented. |
 
 **`tagger.js` details**
 - **Supported MIME types:** only `image/jpeg`, `image/png` and `image/webp`. Anything else (camera RAW, `application/octet-stream`, other `image/*` types the validator lets through) makes `tag()` throw before any API call.
 - **Size check:** if `buffer.length` is over 5 MB (5 × 1024 × 1024 bytes), `tag()` throws before any API call (the vision API's per-image limit).
-- **Request:** one `client.messages.parse` call with `model`, `max_tokens: 1024`, `output_config: { effort: 'low', format: zodOutputFormat(schema) }`, and a user message holding a base64 image block (`media_type` = the upload's MIME type) plus a short instruction to describe the main garment. Request options: `{ timeout: timeoutMs, maxRetries: 0 }`, so the SDK itself gives up after 8 s and never retries. One `tag()` call therefore means at most one HTTP request.
-- **Schema:** `category` is an enum of the seven values in §3; `subType` and `color` are strings.
+- **Request:** one `client.models.generateContent` call with `model`, and `contents` holding a short instruction to describe the main garment plus an `inlineData` part (`mimeType` = the upload's MIME type, `data` = base64 image). `config: { responseMimeType: 'application/json', responseSchema, httpOptions: { timeout: timeoutMs } }`, so the SDK itself aborts the HTTP request after 8 s. One `tag()` call means one HTTP request.
+- **Schema:** a `Type.OBJECT` `responseSchema` requiring `category` (enum of the seven values in §3), `subType` and `color` (strings). The JSON in `response.text` is parsed and passed to `normalizeTags()`.
 - **Normalization (strict):** trim and lowercase all three values. If `category` isn't one of the seven values after this, or `subType`/`color` is empty, or the object has missing or extra fields, `tag()` throws, so the item gets `aiTags: null`.
-- **Throws on:** `stop_reason === 'refusal'`, null `parsed_output`, failed normalization, unsupported MIME type, too-large image, or any SDK error (timeout, 4xx, 5xx, network).
+- **Throws on:** invalid or missing JSON in `response.text` (including blocked responses), a `null` body, failed normalization, unsupported MIME type, too-large image, or any SDK error (timeout, 4xx, 5xx, network).
 
 The timeout exists in two places on purpose. The SDK `timeout` stops the real HTTP request, so nothing keeps running or costing money after the response is sent. The `app.js` timer guarantees the response time for any tagger, and lets tests prove it with a fake tagger that never resolves.
 
@@ -80,12 +80,12 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
 
 ## 8. Tests (`npm test`, `node --test`, no real API calls)
 - **`backend/tagger.test.js` (new, fake `client` object):**
-  - A valid parsed output returns `{ category, subType, color }`.
-  - Sends `model: 'claude-haiku-5-5'` and a base64 image block with the right `media_type`.
-  - Sends `max_tokens: 1024`, `output_config.effort: 'low'`, and request options `{ timeout: 8000, maxRetries: 0 }`.
+  - A valid JSON response (`{ text: JSON.stringify(...) }`) returns `{ category, subType, color }`.
+  - Sends `model: 'gemini-3.5-flash'` and an `inlineData` part with the right `mimeType` and base64 data.
+  - Sends `responseMimeType: 'application/json'`, a `responseSchema` requiring the three fields, and `httpOptions: { timeout: 8000 }`.
   - Normalization: `{ category: ' Top ', subType: 'Button-Down Shirt', color: 'LIGHT BLUE ' }` becomes `{ category: 'top', subType: 'button-down shirt', color: 'light blue' }`.
   - Throws on an unknown category, an empty `subType`/`color`, or a missing or extra field.
-  - `stop_reason: 'refusal'` throws, and `parsed_output: null` throws.
+  - Invalid JSON, a missing `text` (blocked response) and a `null` body throw; JSON with wrong fields or category throws; a client error propagates.
   - `application/octet-stream` and `image/gif` throw without calling the client.
   - A buffer over 5 MB throws without calling the client.
 - **`backend/app.test.js` (new cases, fake tagger):**
@@ -96,15 +96,15 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
   - No tagger passed: 201, `aiTags: null` (the existing Check 1 keeps working).
   - Invalid upload: 415, and the tagger spy was called 0 times.
 - **`backend/wardrobeStore.test.js`:** `aiTags` is persisted, and defaults to `null` when not given.
-- **Manual check (real API):** put `ANTHROPIC_API_KEY=…` in `backend/.env` (or export it in the shell), run `./run.sh`, upload a real shirt photo, see tags in the grid and in `backend/data/wardrobe.json`, and note how long the save took (this feeds the ADR "I checked" line). Then restart without the key, upload again, and confirm the item is saved with no tags.
+- **Manual check (real API):** put `GEMINI_API_KEY=…` in `backend/.env` (or export it in the shell), run `./run.sh`, upload a real shirt photo, see tags in the grid and in `backend/data/wardrobe.json`, and note how long the save took (this feeds the ADR "I checked" line). Then restart without the key, upload again, and confirm the item is saved with no tags.
 
 ## 9. Assumptions
-- The API key comes from the `ANTHROPIC_API_KEY` environment variable. For local dev it can live in `backend/.env`, which the `dev` script loads with `--env-file-if-exists` (the app starts without that file too). `.env` is already in `.gitignore` and is never committed. `npm start` doesn't load `.env`; there the variable must be exported.
+- The API key comes from the `GEMINI_API_KEY` environment variable (shared with visual comparison). For local dev it can live in `backend/.env`, which the `dev` script loads with `--env-file-if-exists` (the app starts without that file too). `.env` is already in `.gitignore` and is never committed. `npm start` doesn't load `.env`; there the variable must be exported.
 - A single flat `category` list is good enough for later candidate filtering. Colors are free text (only trimmed and lowercased, not mapped to a fixed palette).
 - Test photos are 5 MB or smaller. Larger photos are saved without tags; resizing them is out of scope.
 - An 8 s worst-case wait on save is acceptable for the MVP (see ADR 001 "I'll reconsider if").
-- Haiku 5.5 is accurate enough for category and color. This will be checked manually on real photos.
-- Sending wardrobe photos to the Anthropic API is acceptable for this local MVP (it's a single user, with no other privacy requirements).
+- `gemini-3.5-flash` is accurate enough for category and color. This will be checked manually on real photos.
+- Sending wardrobe photos to the Google Gemini API is acceptable for this local MVP (it's a single user, with no other privacy requirements).
 - Frontend tag display is a small addition so criterion 2 is visible. It can be dropped if you want a backend-only ticket.
 
 ## 10. Out of scope
