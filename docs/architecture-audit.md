@@ -4,6 +4,8 @@
 
 **Status note:** at audit time the Vitest migration and 80% coverage gate were on the unmerged branch `chore/vitest-coverage`. That branch was cleaned up the same day so it only holds the migration. The lockfile and `.npmrc` update moved to `chore/deps-npmrc`. The scratch script and sample photos were moved off GitHub to a local-only branch.
 
+**Update 2026-11-24:** auto-tagging (Task 2) has since moved from Anthropic to Google Gemini (`gemini-3.5-flash`), sharing one `GEMINI_API_KEY` and client with visual comparison. The AI-provider lines below reflect that; the rest (test counts, findings, recommendations) still describe the audited state.
+
 **Corrections to common assumptions:**
 - **BUG-001 is already fixed** (commit `b82c9c9`, ticket marked "Fixed 2026-10-20").
 - **`main` has 29 tests**, and they all pass. They run on Node's built-in runner.
@@ -22,7 +24,7 @@
 | Backend | Node 22 + Express 5, port 3000 | Small HTTP API. Express 5 passes async errors on by itself, so no try/catch is needed in routes |
 | Upload parsing | Multer, in memory | Validation runs before anything touches the disk |
 | Storage | Image files in `backend/uploads/` + a JSON file `backend/data/wardrobe.json` | Zero setup for a single-user MVP. `spec.md` leaves the door open to SQLite |
-| AI | Anthropic SDK, `claude-haiku-5-5`, structured output via zod | Cheapest, fastest model for a simple tagging job (ADR-001) |
+| AI | Google Gemini (`@google/genai`), `gemini-3.5-flash`, JSON output via `responseSchema` | One provider and one API key for both tagging and comparison (originally Anthropic, see ADR-001) |
 | Frontend | React 19 + Vite 8, port 5173; Vite forwards `/api` and `/uploads` to the backend | Fast development; mobile-first single page |
 | Tests | `node --test` on `main` (Vitest on `chore/vitest-coverage`) | No dependency needed. Each module takes its dependencies as parameters, so tests pass in fakes |
 
@@ -46,7 +48,7 @@
 - `architecture-audit.md`: this document.
 
 **backend/**
-- `index.js`: the composition root. It builds the store, creates the tagger only if `ANTHROPIC_API_KEY` is set, and starts the server. It's the only file that touches environment variables and real paths.
+- `index.js`: the composition root. It builds the store, creates one Gemini client and both the tagger and the matcher only if `GEMINI_API_KEY` is set, and starts the server. It's the only file that touches environment variables and real paths.
 - `app.js`: `createApp({ store, uploadDir, tagger, tagTimeoutMs })`. It defines three routes, plus static serving of `/uploads`:
   - `GET /api/health`
   - `GET /api/wardrobe`
@@ -54,7 +56,7 @@
   - `tagWithTimeout` races the tagger against a timer and never fails the save.
 - `validator.js`: `isValidImageFile` checks the file extension against an allow-list; `isValidImageMime` accepts any `image/*` type or `application/octet-stream`.
 - `wardrobeStore.js`: `createWardrobeStore({ dataFile, uploadDir })` returns `{ list, add }`. Saves are queued one at a time and written atomically (temp file, then rename). It cleans up user tags and returns the newest items first.
-- `tagger.js`: `createTagger({ client, model, timeoutMs })` returns `{ tag(buffer, mimetype) }`. It only accepts jpeg, png and webp up to 5 MB. Each call makes one API request with no retries, uses zod structured output, and checks the reply strictly (seven allowed categories, lowercase, no missing or extra fields).
+- `tagger.js`: `createTagger({ client, model, timeoutMs })` returns `{ tag(buffer, mimetype) }`. It only accepts jpeg, png and webp up to 5 MB. Each call makes one Gemini `generateContent` request with a JSON `responseSchema` and an SDK timeout, and checks the reply strictly (seven allowed categories, lowercase, no missing or extra fields).
 - `*.test.js`: 29 tests that use fakes and temp directories and never call the real API.
 
   | File | Tests |
@@ -148,7 +150,7 @@ One thing in the contract doc is out of date. `boundary-upload.md` still says th
 **Product and security (fine for a single local user, not beyond that)**
 
 13. No login. Anyone who can reach the port can see all photos under `/uploads`.
-14. Photos go to Anthropic. Sample photos were briefly pushed to GitHub on the Vitest branch. They have been removed from the branch, but GitHub may keep the old commit reachable by its SHA for some time.
+14. Photos go to Google Gemini (Anthropic at audit time). Sample photos were briefly pushed to GitHub on the Vitest branch. They have been removed from the branch, but GitHub may keep the old commit reachable by its SHA for some time.
 
 ---
 
