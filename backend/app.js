@@ -68,7 +68,7 @@ function wardrobeUploadError(file) {
   return null
 }
 
-export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 8000 }) {
+export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 15000 }) {
   const app = express()
 
   app.use(express.json())

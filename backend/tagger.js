@@ -44,7 +44,7 @@ export function normalizeTags(raw) {
   return tags
 }
 
-export function createTagger({ client, model = 'gemini-3.5-flash', timeoutMs = 8000 }) {
+export function createTagger({ client, model = 'gemini-3.5-flash', timeoutMs = 15000 }) {
   async function tag(buffer, mimetype) {
     if (!SUPPORTED_MIME.has(mimetype)) {
       throw new Error(`Tagging not supported for ${mimetype}`)

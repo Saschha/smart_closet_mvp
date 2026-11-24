@@ -45,7 +45,7 @@ describe('createTagger', () => {
         assert.equal(config.responseMimeType, 'application/json');
         assert.deepEqual(config.responseSchema.required, ['category', 'subType', 'color']);
         assert.deepEqual(config.responseSchema.properties.category.enum, CATEGORIES);
-        assert.deepEqual(config.httpOptions, { timeout: 8000 });
+        assert.deepEqual(config.httpOptions, { timeout: 15000 });
     });
 
     it('normalizes whitespace and case', async () => {
