@@ -6,7 +6,7 @@
 
 ## 2. User flow
 1. The user picks or takes a photo, optionally fills in title, note and tags, and taps **Save to wardrobe** (same as Task 1).
-2. The button shows **"Saving & tagging…"** and stays disabled. This normally takes a few seconds and at most about 8 s.
+2. The button shows **"Saving & tagging…"** and stays disabled. This normally takes a few seconds and at most about 15 s.
 3. On success, the form resets and the new item appears at the top of the grid with its AI tags, e.g. *"top · button-down shirt · light blue"*, under the manual tags.
 4. If tagging failed or timed out, the item still appears, with no AI tag line. No error message is shown, because the save itself succeeded.
 5. Validation errors (415/400) and server errors (500) behave exactly as in Task 1.
@@ -34,8 +34,8 @@
 ## 4. Backend changes
 | File | Change |
 |---|---|
-| `backend/tagger.js` (new) | `createTagger({ client, model = 'gemini-3.5-flash', timeoutMs = 8000 })` returns `{ tag(buffer, mimetype) }`. See the details below. |
-| `backend/app.js` | `createApp({ store, uploadDir, tagger, tagTimeoutMs = 8000 })`. After the existing validation and before `store.add`, it runs `tagger.tag(file.buffer, file.mimetype)` raced against a `tagTimeoutMs` timer, inside `try/catch`. The timer is cleared (`clearTimeout`) as soon as tagging settles, success or failure, so no timer stays pending after the response. On any failure it logs `console.warn` (error message only, never request headers or the key) and uses `aiTags = null`. If no `tagger` is passed, tagging is skipped. |
+| `backend/tagger.js` (new) | `createTagger({ client, model = 'gemini-3.5-flash', timeoutMs = 15000 })` returns `{ tag(buffer, mimetype) }`. See the details below. |
+| `backend/app.js` | `createApp({ store, uploadDir, tagger, tagTimeoutMs = 15000 })`. After the existing validation and before `store.add`, it runs `tagger.tag(file.buffer, file.mimetype)` raced against a `tagTimeoutMs` timer, inside `try/catch`. The timer is cleared (`clearTimeout`) as soon as tagging settles, success or failure, so no timer stays pending after the response. On any failure it logs `console.warn` (error message only, never request headers or the key) and uses `aiTags = null`. If no `tagger` is passed, tagging is skipped. |
 | `backend/wardrobeStore.js` | `add({ …, aiTags = null })` and the record gets `aiTags`. |
 | `backend/index.js` | If `GEMINI_API_KEY` is set, build one `new GoogleGenAI({ apiKey })` client and pass it to both `createGeminiMatcher({ client })` and `createTagger({ client })`. Otherwise log "AI features disabled (GEMINI_API_KEY is not set)" and pass no tagger or matcher. |
 | `backend/package.json` | Uses the existing `@google/genai` dependency (no extra SDK). Change the `dev` script to `node --env-file-if-exists=.env --watch index.js` so a local `backend/.env` file is loaded (Node ≥ 22.9; the project uses 22.22). `start` is unchanged. |
@@ -44,7 +44,7 @@
 **`tagger.js` details**
 - **Supported MIME types:** only `image/jpeg`, `image/png` and `image/webp`. Anything else (camera RAW, `application/octet-stream`, other `image/*` types the validator lets through) makes `tag()` throw before any API call.
 - **Size check:** if `buffer.length` is over 5 MB (5 × 1024 × 1024 bytes), `tag()` throws before any API call (the vision API's per-image limit).
-- **Request:** one `client.models.generateContent` call with `model`, and `contents` holding a short instruction to describe the main garment plus an `inlineData` part (`mimeType` = the upload's MIME type, `data` = base64 image). `config: { responseMimeType: 'application/json', responseSchema, httpOptions: { timeout: timeoutMs } }`, so the SDK itself aborts the HTTP request after 8 s. One `tag()` call means one HTTP request.
+- **Request:** one `client.models.generateContent` call with `model`, and `contents` holding a short instruction to describe the main garment plus an `inlineData` part (`mimeType` = the upload's MIME type, `data` = base64 image). `config: { responseMimeType: 'application/json', responseSchema, httpOptions: { timeout: timeoutMs } }`, so the SDK itself aborts the HTTP request after 15 s (Gemini rejects deadlines under 10 s with HTTP 400 INVALID_ARGUMENT). One `tag()` call means one HTTP request.
 - **Schema:** a `Type.OBJECT` `responseSchema` requiring `category` (enum of the seven values in §3), `subType` and `color` (strings). The JSON in `response.text` is parsed and passed to `normalizeTags()`.
 - **Normalization (strict):** trim and lowercase all three values. If `category` isn't one of the seven values after this, or `subType`/`color` is empty, or the object has missing or extra fields, `tag()` throws, so the item gets `aiTags: null`.
 - **Throws on:** invalid or missing JSON in `response.text` (including blocked responses), a `null` body, failed normalization, unsupported MIME type, too-large image, or any SDK error (timeout, 4xx, 5xx, network).
@@ -62,7 +62,7 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
 | Validation fails (no file, wrong format, 0 bytes) | Unchanged: 400/415, nothing saved, **tagger not called**. |
 | No API key configured | Item saved, `aiTags: null`, one startup log line. |
 | AI API error (401, 429, 5xx, network) | Item saved, `aiTags: null`, `console.warn`. |
-| AI call exceeds 8 s | The SDK aborts the HTTP request (no retry). Item saved, `aiTags: null`, the response is sent after about 8 s. |
+| AI call exceeds 15 s | The SDK aborts the HTTP request (no retry). Item saved, `aiTags: null`, the response is sent after about 15 s. |
 | Model refuses, or returns output that fails parsing or normalization (unknown category, empty value, wrong fields) | Item saved, `aiTags: null`. |
 | Camera RAW, `application/octet-stream`, or any type other than jpeg/png/webp | Tagging skipped, no API call. Item saved, `aiTags: null`. |
 | Image larger than 5 MB | Tagging skipped, no API call. Item saved, `aiTags: null`. (Task 1 has no upload size limit, so this can happen with large phone photos.) |
@@ -73,7 +73,7 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
 - [ ] When tagging is enabled, each valid JPEG/PNG/WebP upload of 5 MB or less calls `tagger.tag()` exactly once, and that makes at most one API request (no retries).
 - [ ] `aiTags` (`category`, `subType`, `color`) is saved in the item's record next to `filepath`, and returned in the 201 response and in `GET /api/wardrobe`.
 - [ ] If tagging fails, times out, is skipped, or is disabled, the photo and record are still saved (201) with `aiTags: null`, and the user sees no error.
-- [ ] Saving never waits longer than the tagging timeout (8 s) plus the normal save time.
+- [ ] Saving never waits longer than the tagging timeout (15 s) plus the normal save time.
 - [ ] Invalid uploads never trigger a tagging call.
 - [ ] The grid shows AI tags when present, and old items without `aiTags` still render.
 - [ ] All existing Task 1 tests still pass.
@@ -82,7 +82,7 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
 - **`backend/tagger.test.js` (new, fake `client` object):**
   - A valid JSON response (`{ text: JSON.stringify(...) }`) returns `{ category, subType, color }`.
   - Sends `model: 'gemini-3.5-flash'` and an `inlineData` part with the right `mimeType` and base64 data.
-  - Sends `responseMimeType: 'application/json'`, a `responseSchema` requiring the three fields, and `httpOptions: { timeout: 8000 }`.
+  - Sends `responseMimeType: 'application/json'`, a `responseSchema` requiring the three fields, and `httpOptions: { timeout: 15000 }`.
   - Normalization: `{ category: ' Top ', subType: 'Button-Down Shirt', color: 'LIGHT BLUE ' }` becomes `{ category: 'top', subType: 'button-down shirt', color: 'light blue' }`.
   - Throws on an unknown category, an empty `subType`/`color`, or a missing or extra field.
   - Invalid JSON, a missing `text` (blocked response) and a `null` body throw; JSON with wrong fields or category throws; a client error propagates.
@@ -92,7 +92,7 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
   - Success: 201, `aiTags` in the response, and the same `aiTags` in `GET /api/wardrobe`.
   - Tagger throws: 201, `aiTags: null`, the image file exists on disk.
   - Tagger never resolves (`tagTimeoutMs: 50`): 201 with `aiTags: null` within ~1 s.
-  - Tagger resolves quickly: the test run doesn't stay open waiting for the 8 s timer (the timer was cleared).
+  - Tagger resolves quickly: the test run doesn't stay open waiting for the 15 s timer (the timer was cleared).
   - No tagger passed: 201, `aiTags: null` (the existing Check 1 keeps working).
   - Invalid upload: 415, and the tagger spy was called 0 times.
 - **`backend/wardrobeStore.test.js`:** `aiTags` is persisted, and defaults to `null` when not given.
@@ -102,7 +102,7 @@ The timeout exists in two places on purpose. The SDK `timeout` stops the real HT
 - The API key comes from the `GEMINI_API_KEY` environment variable (shared with visual comparison). For local dev it can live in `backend/.env`, which the `dev` script loads with `--env-file-if-exists` (the app starts without that file too). `.env` is already in `.gitignore` and is never committed. `npm start` doesn't load `.env`; there the variable must be exported.
 - A single flat `category` list is good enough for later candidate filtering. Colors are free text (only trimmed and lowercased, not mapped to a fixed palette).
 - Test photos are 5 MB or smaller. Larger photos are saved without tags; resizing them is out of scope.
-- An 8 s worst-case wait on save is acceptable for the MVP (see ADR 001 "I'll reconsider if").
+- A 15 s worst-case wait on save is acceptable for the MVP (see ADR 001 "I'll reconsider if").
 - `gemini-3.5-flash` is accurate enough for category and color. This will be checked manually on real photos.
 - Sending wardrobe photos to the Google Gemini API is acceptable for this local MVP (it's a single user, with no other privacy requirements).
 - Frontend tag display is a small addition so criterion 2 is visible. It can be dropped if you want a backend-only ticket.
