@@ -2,7 +2,7 @@
 
 **Boundary:** Frontend upload form (`frontend/src/App.jsx` → `handleSubmit`) ⇄ Backend storage API (`backend/app.js` → `POST /api/wardrobe`)
 
-Items marked **(planned)** are part of the target contract but not implemented yet.
+Everything in this contract is implemented. Remaining gaps between the contract and the code are listed at the end.
 
 ## 1. The Contract
 
@@ -11,9 +11,9 @@ Items marked **(planned)** are part of the target contract but not implemented y
 | **Who calls** | `App` React component, in `handleSubmit()`. The user submits the "Save to wardrobe" form. |
 | **Who answers** | Express route `POST /api/wardrobe` in `backend/app.js`. Multer parses the upload, `validator.js` checks it, and `wardrobeStore.add()` saves it. |
 | **What goes across** | `Content-Type: multipart/form-data; boundary=…` (the browser sets this through `new FormData(form)`).<br>Body fields:<br>• `image` (file, **required**): `.jpg .jpeg .png .webp` or camera RAW (`.dng .cr2 .nef .arw .orf .rw2 .raw`); MIME `image/*` or `application/octet-stream`<br>• `title` (string, optional)<br>• `note` (string, optional)<br>• `tags` (comma-separated string, optional) |
-| **Success** | **`201 Created`**<br>`{ "id": "uuid", "filename": "uuid.jpg", "filepath": "/uploads/uuid.jpg", "title": "Blue Linen Shirt", "note": "", "tags": ["summer","linen"], "aiTags": { "category": "top", "subType": "button-down shirt", "color": "light blue" }, "createdAt": "2026-10-08T10:00:00.000Z" }`<br>`filepath` is the image URL, served statically from `/uploads`.<br>**(planned, Task 2)** `aiTags` holds the AI tags: three trimmed lowercase strings, `category` ∈ `top, bottom, dress, outerwear, shoes, accessory, other`. It is `null` when tagging failed, timed out, was skipped or is disabled. A tagging failure never changes the status: it is still `201`. Items saved before Task 2 have no `aiTags` field. See `docs/spec-task2-ai-tagging.md`. |
-| **⚠ Failure: validation** | All errors use the same shape: **`{ "error": "<human-readable message>" }`**<br>• `400`: no `image` field → `"No image provided"`<br>• `415`: wrong extension or MIME (e.g. `notes.pdf`) → `"Unsupported format"`<br>• `400`: 0-byte file → `"Image is empty or unreadable"`<br>• `413` **(planned)**: file > 5 MB → `"Image is too large (max 5 MB)"`<br>Guarantee: nothing is written to disk. Multer keeps the file in memory until validation passes. |
-| **⚠ Failure: server** | • `500`: storage write fails (disk full, `EACCES`, corrupt `wardrobe.json`).<br>Today, Express 5 catches the rejected promise and returns its default **HTML** 500 page. **(Planned):** an error middleware that returns `{ "error": "Could not save item, please try again" }`.<br>• Network failure (server down): `fetch` throws and there is no response at all. |
+| **Success** | **`201 Created`**<br>`{ "id": "uuid", "filename": "uuid.jpg", "filepath": "/uploads/uuid.jpg", "title": "Blue Linen Shirt", "note": "", "tags": ["summer","linen"], "aiTags": { "category": "top", "subType": "button-down shirt", "color": "light blue" }, "createdAt": "2026-10-08T10:00:00.000Z" }`<br>`filepath` is the image URL, served statically from `/uploads`.<br>`aiTags` (Task 2, live: Google Gemini `gemini-3.5-flash`, 15 s timeout) holds the AI tags: three trimmed lowercase strings, `category` ∈ `top, bottom, dress, outerwear, shoes, accessory, other`. It is `null` when tagging failed, timed out, was skipped or is disabled. A tagging failure never changes the status: it is still `201`. Items saved before Task 2 have no `aiTags` field. See `docs/spec-task2-ai-tagging.md`. |
+| **⚠ Failure: validation** | All errors use the same shape: **`{ "error": "<human-readable message>" }`**<br>• `400`: no `image` field → `"No image provided"`<br>• `415`: wrong extension or MIME (e.g. `notes.pdf`) → `"Unsupported format"`<br>• `400`: 0-byte file → `"Image is empty or unreadable"`<br>• `413`: file > 10 MB → `"Image is too large (max 10 MB)"` (Payload Too Large, from Multer's `fileSize` limit)<br>• `400`: other Multer errors, e.g. the file sent under a field name other than `image` → `"Unexpected file field"`<br>Guarantee: nothing is written to disk. Multer keeps the file in memory until validation passes. |
+| **⚠ Failure: server** | • `500`: storage write fails (disk full, `EACCES`, corrupt `wardrobe.json`).<br>The JSON error middleware at the end of `backend/app.js` catches it, logs the error on the server and returns **`{ "error": "Internal server error" }`** without internal details. Errors that carry a 4xx status (e.g. malformed JSON) keep their status and message.<br>• Network failure (server down): `fetch` throws and there is no response at all. |
 | **Caller's obligation on failure** | Read `body.error` if it is there. Otherwise show the generic `"Upload failed"`. Never crash. Keep the form contents so the user can retry. |
 
 ## 2. Sequence & Diagram
@@ -49,7 +49,7 @@ sequenceDiagram
             UI->>U: Form reset, new thumbnail in grid
         else Branch B2 – Storage fails (disk full / EACCES)
             S-->>API: throws
-            API-->>UI: 500 (HTML today, JSON {"error"} planned)
+            API-->>UI: 500 {"error": "Internal server error"}
             UI->>UI: res.json() fails → fallback message
             UI->>U: "Upload failed", app keeps running
         end
@@ -99,8 +99,8 @@ UI: FormData{image,title,note,tags} ──POST /api/wardrobe──► multer (me
 
 ## Gaps between this contract and the code
 
-These are not fixed yet; each one would be its own ticket.
+Fixed since this worksheet was written: the upload size limit (now 10 MB → 413) and the JSON 500 response (error middleware in `backend/app.js`).
 
-1. **No 5 MB limit yet.** Adding `limits: { fileSize: 5 * 1024 * 1024 }` to Multer, plus a handler that returns 413, would make it real.
-2. **A 500 returns HTML, not JSON.** The UI's `.catch(() => ({}))` falls back to "Upload failed", so it doesn't crash. Still, a JSON error middleware would make the contract hold everywhere.
-3. **A failure can be half-written.** `store.add` writes the image before it writes `wardrobe.json`. If the second write fails, the image is left on disk with no record pointing to it.
+Still open; each one would be its own ticket:
+
+1. **A failure can be half-written.** `store.add` writes the image before it writes `wardrobe.json`. If the second write fails, the image is left on disk with no record pointing to it.
