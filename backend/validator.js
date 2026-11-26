@@ -6,16 +6,18 @@ const ALLOWED_EXTENSIONS = new Set([
 ]);
 
 export function isValidImageFile(filename) {
-  if (typeof filename !== 'string' || !filename.trim()) {
+  if (typeof filename !== 'string') {
     return false;
   }
 
-  const dotIndex = filename.lastIndexOf('.');
-  if (dotIndex === -1) {
+  const name = filename.trim();
+  const dotIndex = name.lastIndexOf('.');
+  // dotIndex 0 is an extension-only name like ".jpg", which path.extname treats as having no extension.
+  if (dotIndex <= 0) {
     return false;
   }
 
-  const ext = filename.slice(dotIndex).toLowerCase();
+  const ext = name.slice(dotIndex).toLowerCase();
   return ALLOWED_EXTENSIONS.has(ext);
 }
 

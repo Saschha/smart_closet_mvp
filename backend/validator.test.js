@@ -24,6 +24,19 @@ describe('isValidImageFile', () => {
         assert.equal(isValidImageFile(''), false);
         assert.equal(isValidImageFile(null), false);
     });
+
+    it('should return false for extension-only names, consistent with path.extname', () => {
+        assert.equal(isValidImageFile('.jpg'), false);
+        assert.equal(isValidImageFile('  .png  '), false);
+        assert.equal(isValidImageFile('shirt'), false);
+        assert.equal(isValidImageFile('   '), false);
+    });
+
+    it('should ignore whitespace around the filename', () => {
+        assert.equal(isValidImageFile(' shirt.jpg'), true);
+        assert.equal(isValidImageFile('shirt.jpg '), true);
+        assert.equal(isValidImageFile('\tcoat.webp\n'), true);
+    });
 });
 
 describe('isValidImageMime', () => {

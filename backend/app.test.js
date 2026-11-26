@@ -110,6 +110,40 @@ describe('wardrobe API', () => {
         assert.equal(res.status, 400);
         await assertNothingPersisted();
     });
+
+    it('returns a JSON 400 (not 500) when the file is sent under the wrong field name', async () => {
+        const form = new FormData();
+        form.append('photo', new Blob(['jpeg-bytes'], { type: 'image/jpeg' }), 'shirt.jpg');
+        const res = await fetch(`${baseUrl}/api/wardrobe`, { method: 'POST', body: form });
+        assert.equal(res.status, 400);
+        assert.deepEqual(await res.json(), { error: 'Unexpected file field' });
+        await assertNothingPersisted();
+    });
+
+    it('returns a JSON 413 for an image larger than 10 MB', async () => {
+        const res = await upload('big.jpg', new Uint8Array(10 * 1024 * 1024 + 1), 'image/jpeg');
+        assert.equal(res.status, 413);
+        assert.deepEqual(await res.json(), { error: 'Image is too large (max 10 MB)' });
+        await assertNothingPersisted();
+    });
+
+    it('accepts an image of exactly 10 MB', async () => {
+        const res = await upload('big.jpg', new Uint8Array(10 * 1024 * 1024), 'image/jpeg');
+        assert.equal(res.status, 201);
+    });
+
+    it('rejects an extension-only filename like ".jpg"', async () => {
+        const res = await upload('.jpg', 'jpeg-bytes', 'image/jpeg');
+        assert.equal(res.status, 415);
+        await assertNothingPersisted();
+    });
+
+    it('trims whitespace around the filename before saving', async () => {
+        const res = await upload(' shirt.jpg ', 'jpeg-bytes', 'image/jpeg');
+        assert.equal(res.status, 201);
+        const item = await res.json();
+        assert.match(item.filename, /^[0-9a-f-]+\.jpg$/);
+    });
 });
 
 describe('wardrobe API with AI tagging', () => {

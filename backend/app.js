@@ -4,8 +4,10 @@ import express from 'express'
 import multer from 'multer'
 import { isValidImageFile, isValidImageMime } from './validator.js'
 
+const MAX_UPLOAD_MB = 10
+
 // Keep uploads in memory so nothing is written to disk before validation passes.
-const upload = multer({ storage: multer.memoryStorage() })
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 } })
 
 // Formats Gemini can read. Camera RAW is accepted for saving but can't be compared.
 const GEMINI_MIME = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }
@@ -84,6 +86,8 @@ export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 15
 
   app.post('/api/wardrobe', upload.single('image'), async (req, res) => {
     const file = req.file
+    // Trim once so the validator, the extension lookup and the store all see the same name.
+    if (file) file.originalname = file.originalname.trim()
     const problem = wardrobeUploadError(file)
     if (problem) {
       return res.status(problem.status).json({ error: problem.error })
@@ -100,6 +104,7 @@ export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 15
     if (!file) {
       return res.status(400).json({ error: 'No image provided' })
     }
+    file.originalname = file.originalname.trim()
     const mimeType = geminiMimeFor(file.originalname)
     if (!isValidImageFile(file.originalname) || !isValidImageMime(file.mimetype) || !mimeType) {
       return res.status(415).json({ error: 'Unsupported format. Use JPG, PNG or WebP.' })
@@ -126,6 +131,13 @@ export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 15
   app.use((err, req, res, next) => {
     if (res.headersSent) {
       return next(err)
+    }
+    // Multer errors are client mistakes (file too large, wrong field name) but carry no status.
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `Image is too large (max ${MAX_UPLOAD_MB} MB)` })
+      }
+      return res.status(400).json({ error: err.message })
     }
     const status = err.status >= 400 && err.status < 500 ? err.status : 500
     if (status === 500) {
