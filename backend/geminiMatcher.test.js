@@ -45,6 +45,8 @@ describe('createGeminiMatcher', () => {
         assert.equal(params.model, 'gemini-3.5-flash');
         assert.equal(params.config.responseMimeType, 'application/json');
         assert.deepEqual(params.config.responseSchema.required, ['hasMatch', 'matches']);
+        assert.deepEqual(params.config.thinkingConfig, { thinkingBudget: 0 });
+        assert.deepEqual(params.config.httpOptions, { timeout: 45000 });
 
         const parts = params.contents[0].parts;
         assert.match(parts[0].text, /cut, material and color/);

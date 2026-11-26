@@ -81,7 +81,14 @@ export function createGeminiMatcher({ client, model = 'gemini-3.5-flash', timeou
     const request = client.models.generateContent({
       model,
       contents: [{ role: 'user', parts }],
-      config: { responseMimeType: 'application/json', responseSchema: RESPONSE_SCHEMA },
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        // Thinking on multi-image requests pushed comparisons past the timeout; answer directly.
+        thinkingConfig: { thinkingBudget: 0 },
+        // The SDK aborts the HTTP request itself after timeoutMs.
+        httpOptions: { timeout: timeoutMs },
+      },
     })
 
     let timer
