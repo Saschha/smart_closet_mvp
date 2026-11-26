@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 const ACCEPT = 'image/*,.dng,.cr2,.nef,.arw,.orf,.rw2,.raw'
 
@@ -32,17 +32,44 @@ function App() {
   const [checking, setChecking] = useState(false)
   const [checkResult, setCheckResult] = useState(null)
   const [checkError, setCheckError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  // AbortController of the wardrobe load still in flight, or null when none is.
+  const pendingLoad = useRef(null)
 
-  async function loadItems() {
-    const res = await fetch('/api/wardrobe')
+  async function loadItems(signal) {
+    const res = await fetch('/api/wardrobe', { signal })
     if (!res.ok) {
       throw new Error(`Could not load wardrobe (${res.status})`)
     }
-    setItems(await res.json())
+    const list = await res.json()
+    if (!signal.aborted) {
+      setItems(list)
+    }
+  }
+
+  // Cancels any wardrobe load in flight and starts a new one.
+  function startLoad() {
+    pendingLoad.current?.abort()
+    const controller = new AbortController()
+    pendingLoad.current = controller
+    setLoadError('')
+    loadItems(controller.signal)
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setLoadError('Could not load wardrobe')
+        }
+      })
+      .finally(() => {
+        if (pendingLoad.current === controller) {
+          pendingLoad.current = null
+        }
+      })
+    return controller
   }
 
   useEffect(() => {
-    loadItems().catch(() => setError('Could not load wardrobe'))
+    const controller = startLoad()
+    return () => controller.abort()
   }, [])
 
   async function handleSubmit(event) {
@@ -65,6 +92,11 @@ function App() {
 
       if (res.status === 201) {
         setItems((prev) => [body, ...prev])
+        // A load still in flight may predate this save and would overwrite it, so replace
+        // it with a fresh one; the server has already stored the new item.
+        if (pendingLoad.current) {
+          startLoad()
+        }
         form.reset()
         return
       }
@@ -169,6 +201,7 @@ function App() {
       </form>
 
       <h2>My wardrobe ({items.length})</h2>
+      {loadError && <p style={styles.error}>{loadError}</p>}
       <ul style={styles.grid}>
         {items.map((item) => (
           <li key={item.id}>
