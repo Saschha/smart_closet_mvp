@@ -91,7 +91,11 @@ function App() {
       }
       const body = await res.json().catch(() => ({}))
       if (res.ok) {
-        setCheckResult(body)
+        if (body && typeof body === 'object' && typeof body.hasMatch === 'boolean') {
+          setCheckResult(body)
+        } else {
+          setCheckError('Invalid comparison response from server.')
+        }
       } else {
         setCheckError(body.error || 'Visual comparison failed')
       }
@@ -122,7 +126,13 @@ function App() {
 
         {checkError && <p style={styles.error}>{checkError}</p>}
 
-        {checkResult && !checkResult.hasMatch && (
+        {checkResult && checkResult.comparedCount === 0 && (
+          <p style={styles.tags}>
+            No comparable JPG/PNG/WebP items in your wardrobe yet — add clothes below before comparing.
+          </p>
+        )}
+
+        {checkResult && checkResult.comparedCount !== 0 && !checkResult.hasMatch && (
           <p style={styles.safe}>No similar items found in your closet! Safe to buy.</p>
         )}
 

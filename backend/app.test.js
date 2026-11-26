@@ -332,7 +332,7 @@ describe('POST /api/check', () => {
         const res = await check('store.jpg', 'store-bytes', 'image/jpeg');
 
         assert.equal(res.status, 200);
-        assert.deepEqual(await res.json(), { hasMatch: true, matches });
+        assert.deepEqual(await res.json(), { hasMatch: true, matches, comparedCount: 2 });
         assert.equal(matcher.calls.length, 1);
         const { newItem, closetItems } = matcher.calls[0];
         assert.deepEqual(newItem, { buffer: Buffer.from('store-bytes'), mimeType: 'image/jpeg' });
@@ -341,6 +341,16 @@ describe('POST /api/check', () => {
             { id: jeans.id, buffer: Buffer.from('jeans'), mimeType: 'image/png', title: 'Jeans' },
             { id: shirt.id, buffer: Buffer.from('shirt'), mimeType: 'image/jpeg', title: 'Blue shirt' },
         ]);
+    });
+
+    it('returns comparedCount 0 when the wardrobe has no comparable photos', async () => {
+        const matcher = fakeMatcher(() => ({ hasMatch: false, matches: [] }));
+        const { check } = await start({ matcher });
+
+        const res = await check();
+
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { hasMatch: false, matches: [], comparedCount: 0 });
     });
 
     it('returns 400 for a missing or empty image without calling the matcher', async () => {

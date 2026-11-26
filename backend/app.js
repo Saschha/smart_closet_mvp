@@ -119,7 +119,7 @@ export function createApp({ store, uploadDir, tagger, matcher, tagTimeoutMs = 15
       console.warn(`Visual comparison failed: ${err.message}`)
       return res.status(502).json({ error: 'Visual comparison failed, please try again' })
     }
-    res.json({ hasMatch: result.hasMatch, matches: result.matches })
+    res.json({ hasMatch: result.hasMatch, matches: result.matches, comparedCount: closetItems.length })
   })
 
   // Errors thrown in a route or middleware become JSON instead of Express's default HTML page.
