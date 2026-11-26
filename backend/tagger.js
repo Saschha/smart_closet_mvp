@@ -1,17 +1,20 @@
 // backend/tagger.js
-import { z } from 'zod'
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod'
+import { Type } from '@google/genai'
 
 export const CATEGORIES = ['top', 'bottom', 'dress', 'outerwear', 'shoes', 'accessory', 'other']
 const SUPPORTED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const FIELDS = ['category', 'subType', 'color']
 
-const TagSchema = z.object({
-  category: z.enum(CATEGORIES),
-  subType: z.string(),
-  color: z.string(),
-})
+const RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    category: { type: Type.STRING, enum: CATEGORIES },
+    subType: { type: Type.STRING },
+    color: { type: Type.STRING },
+  },
+  required: ['category', 'subType', 'color'],
+}
 
 const PROMPT =
   'Describe the main garment in this photo. ' +
@@ -41,7 +44,7 @@ export function normalizeTags(raw) {
   return tags
 }
 
-export function createTagger({ client, model = 'claude-haiku-5-5', timeoutMs = 8000 }) {
+export function createTagger({ client, model = 'gemini-3.5-flash', timeoutMs = 15000 }) {
   async function tag(buffer, mimetype) {
     if (!SUPPORTED_MIME.has(mimetype)) {
       throw new Error(`Tagging not supported for ${mimetype}`)
@@ -50,29 +53,33 @@ export function createTagger({ client, model = 'claude-haiku-5-5', timeoutMs = 8
       throw new Error('Image is too large to tag')
     }
 
-    const response = await client.messages.parse(
-      {
-        model,
-        max_tokens: 1024,
-        output_config: { effort: 'low', format: zodOutputFormat(TagSchema) },
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: mimetype, data: buffer.toString('base64') } },
-              { type: 'text', text: PROMPT },
-            ],
-          },
-        ],
+    const response = await client.models.generateContent({
+      model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { text: PROMPT },
+            { inlineData: { mimeType: mimetype, data: buffer.toString('base64') } },
+          ],
+        },
+      ],
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: RESPONSE_SCHEMA,
+        // The SDK aborts the HTTP request itself after timeoutMs.
+        httpOptions: { timeout: timeoutMs },
       },
-      // The SDK aborts the HTTP request itself, and never retries: one tag() = at most one request.
-      { timeout: timeoutMs, maxRetries: 0 },
-    )
+    })
 
-    if (response.stop_reason === 'refusal') {
-      throw new Error('Tagger refused the image')
+    // A blocked or empty response has no text; JSON.parse then throws too.
+    let raw
+    try {
+      raw = JSON.parse(response.text)
+    } catch (err) {
+      throw new Error(`Tagger returned invalid JSON: ${err.message}`, { cause: err })
     }
-    return normalizeTags(response.parsed_output)
+    return normalizeTags(raw)
   }
 
   return { tag }
